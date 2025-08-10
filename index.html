@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>訪客 IP 紀錄網站</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans TC";background:#0b1020;color:#e6eefc;padding:24px}
+.card{background:linear-gradient(180deg,#0e1627,#0b1220);border:1px solid #1c2b46;border-radius:12px;padding:16px;max-width:900px}
+.muted{color:#91a4bf}.btn{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid #2b3b57;color:#e6eefc;text-decoration:none;background:#0d1620;margin-right:8px}
+.btn.primary{background:linear-gradient(180deg,#7cc3ff,#2aa3ff);color:#04121f;border-color:transparent} code{color:#9ad1ff}
+</style>
+<h1>訪客 IP 紀錄網站</h1>
+<div class="card">
+  <p>你的 IP：<code id="ip">讀取中…</code></p>
+  <p class="muted">每位訪客（含測試）都會被記錄到 <code>ip_log.txt</code>；可在 <a href="/logs" class="btn">/logs</a> 即時查看。</p>
+  <p>安全攻擊模擬面板（若已放檔案）：<a href="/simulator" class="btn primary">/simulator</a></p>
+  <p class="muted">API：<code>GET /get_ip</code>、<code>GET /logs.json</code>、<code>GET /health</code></p>
+</div>
+<script>
+fetch("/get_ip").then(r=>r.json())
+.then(d=>{document.getElementById("ip").textContent = d.ip + " ("+d.ts+")"})
+.catch(()=>{document.getElementById("ip").textContent="取得失敗"});
+</script>
+</html>
